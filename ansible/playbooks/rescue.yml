@@ -1,0 +1,66 @@
+# on failure try to clean postgres and rabbitmq
+- name: clean postgresql remote
+  any_errors_fatal: true
+  ignore_errors: true
+  ignore_unreachable: true
+  delegate_to: "{{ POSTGRESQL_IP }}"
+  when:
+    - POSTGRESQL_REMOTE_SETUP is defined
+  block:
+
+  - name: "remove remote postgresql users"
+    become: yes
+    become_user: "{{ postgresql_admin_user }}"
+    community.general.postgresql_user:
+      name: "{{ POSTGRESQL_USER }}"
+      state: "absent"
+
+  - name: "remove remote postgresql dbs"
+    become: yes
+    become_user: "{{ postgresql_admin_user }}"
+    community.general.postgresql_db:
+      name: "{{ POSTGRESQL_DATABASE }}"
+      state: "absent"
+
+- name: clean postgresql local
+  any_errors_fatal: true
+  ignore_errors: true
+  ignore_unreachable: true
+  when:
+    - POSTGRESQL_LOCAL_SETUP is defined
+  block:
+
+  - name: "remove local postgresql users"
+    become: yes
+    become_user: "{{ postgresql_admin_user }}"
+    community.general.postgresql_user:
+      name: "{{ POSTGRESQL_USER }}"
+      state: "absent"
+
+  - name: "remove local postgresql dbs"
+    become: yes
+    become_user: "{{ postgresql_admin_user }}"
+    community.general.postgresql_db:
+      name: "{{ POSTGRESQL_DATABASE }}"
+      state: "absent"
+
+- name: clean rabbitmq remote
+  any_errors_fatal: true
+  ignore_errors: true
+  ignore_unreachable: true
+  delegate_to: "{{ RABBIT_MQ_IP  }}"
+  when:
+    - RABBIT_MQ_SETUP is defined
+  block:
+
+  - name: Ensure that the vhost {{ RABBIT_MQ_VHOST }} not exists in RabbitMQ.
+    community.rabbitmq.rabbitmq_vhost:
+      name: "{{ RABBIT_MQ_VHOST }}"
+      node: "rabbit"
+      state: "absent"
+
+  - name: Ensure that the user /{{ RABBIT_MQ_VHOST_USER }} not exists in RabbitMQ.
+    community.rabbitmq.rabbitmq_user:
+      user: "{{ RABBIT_MQ_VHOST_USER }}"
+      node: "rabbit"
+      state: "absent"

@@ -12,6 +12,19 @@
     POSTGRESQL_PASSWD: "changeme"
     POSTGRESQL_DATABASE: "mediacms_{{ UUID }}"
 
+    # RabbitMQ
+    # By using rabbitmq as a broker, it is possible to isolate the mediacms installation on its own vhost,
+    # which allows the playbook to use multiple mediacms at the same time.
+    # in this case redis will be used only for the DJANGO cache
+    # to use redis comment out the variables.
+    RABBIT_MQ_ADMIN_USER: "trz"
+    RABBIT_MQ_ADMIN_PASSWORD: "trz"
+
+    # no need to change
+    RABBIT_MQ_VHOST: "mediacms_{{ UUID }}"
+    RABBIT_MQ_VHOST_USER: "mediacms_{{ UUID }}"
+    RABBIT_MQ_VHOST_PASSWORD: "{{ UUID }}"
+
     # do not change
     postgresql_admin_user: "postgres"
     postgresql_preinstalled_db: "postgres"
@@ -158,221 +171,201 @@
       ansible.builtin.include_tasks:
         file: setup.yml
 
+    - name: CMS Config
+      rescue:
+        - include_tasks: rescue.yml
+      block:
+        # pass all variables directly to settings.py, local_settings.py not used
+        - name: Template settings.py
+          ansible.builtin.template:
+            src: ../templates/settings_template.yml
+            dest: /home/mediacms.io/mediacms/cms/settings.py
+            owner: root
+            group: root
+            mode: '0600'
 
-    # pass all variables directly to settings.py, local_settings.py not used
-    - name: Template settings.py
-      ansible.builtin.template:
-        src: ../templates/settings_template.yml
-        dest: /home/mediacms.io/mediacms/cms/settings.py
-        owner: root
-        group: root
-        mode: '0600'
+        - name: Recursively change ownership of /home/mediacms.io/
+          ansible.builtin.file:
+            path: /home/mediacms.io
+            state: directory
+            recurse: yes
+            owner: www-data
+            group: www-data
 
+        - name: copy celery systemd units
+          ansible.builtin.copy:
+           src: "/home/mediacms.io/mediacms/deploy/local_install/{{ item }}"
+           dest: "/etc/systemd/system/{{ item }}"
+           remote_src: true
+          with_items: [celery_long.service, celery_short.service, celery_beat.service, mediacms.service]
 
-    - name: manage.py migrate
-      ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py migrate
-      register: migrate
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - name: enable and start systemd units
+          ansible.builtin.systemd:
+           name: '{{ item }}'
+           enabled: yes
+           state: restarted
+           daemon_reload: yes
+          with_items: [celery_long, celery_short, celery_beat]
 
+        - name: manage.py migrate
+          ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py migrate
+          register: migrate
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - debug:
-        msg: "manage.py migrate output: {{ migrate.stdout }}"
+        - debug:
+            msg: "manage.py migrate output: {{ migrate.stdout }}"
 
+        - name: manage.py loaddata encoding_profiles.json
+          ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py loaddata /home/mediacms.io/mediacms/fixtures/encoding_profiles.json
+          register: loaddata_e
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - name: manage.py loaddata encoding_profiles.json
-      ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py loaddata /home/mediacms.io/mediacms/fixtures/encoding_profiles.json
-      register: loaddata_e
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - debug:
+            msg: "manage.py loaddata output: {{ loaddata_e.stdout }}"
 
+        - name: loaddata fixtures/categories.json
+          ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py loaddata /home/mediacms.io/mediacms/fixtures/categories.json
+          register: loaddata_f
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - debug:
-        msg: "manage.py loaddata output: {{ loaddata_e.stdout }}"
+        - debug:
+            msg: "loaddata fixtures/categories.json output: {{ loaddata_f.stdout }}"
 
+        - name: manage.py collectstatic
+          ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py collectstatic --noinput
+          register: collectstatic
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - name: loaddata fixtures/categories.json
-      ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py loaddata /home/mediacms.io/mediacms/fixtures/categories.json
-      register: loaddata_f
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - debug:
+            msg: "collectstatic output: {{ collectstatic.stdout }}"
 
+        - name: generate ADMIN_PASS
+          ansible.builtin.shell: /home/mediacms.io/bin/python3 -c "import secrets;chars = 'abcdefghijklmnopqrstuvwxyz0123456789';print(''.join(secrets.choice(chars) for i in range(10)))"
+          register: admin_pass
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - debug:
-        msg: "loaddata fixtures/categories.json output: {{ loaddata_f.stdout }}"
+        - name: Set ADMIN_PASS
+          ansible.builtin.set_fact: ADMIN_PASS="{{ admin_pass.stdout }}"
 
+        - name: insert ADMIN_PASS on model
+          ansible.builtin.shell: echo "from users.models import User; User.objects.create_superuser('admin', 'admin@example.com', '{{ ADMIN_PASS }}')" | /home/mediacms.io/bin/python3 manage.py shell
+          register: insert_admin_pass
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - name: manage.py collectstatic
-      ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py collectstatic --noinput
-      register: collectstatic
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - debug:
+            msg: "insert ADMIN_PASS output: {{ insert_admin_pass }}"
 
+        - name: insert FRONTEND_HOST_DOMAIN on model
+          ansible.builtin.shell: echo "from django.contrib.sites.models import Site; Site.objects.update(name='{{ FRONTEND_HOST_DOMAIN }}', domain='{{ FRONTEND_HOST_DOMAIN }}')" | /home/mediacms.io/bin/python3 manage.py shell
+          register: insert_fronted_host_domain
+          args:
+            chdir: /home/mediacms.io/mediacms/
 
-    - debug:
-        msg: "collectstatic output: {{ collectstatic.stdout }}"
+        - name: Generat nginx dirs
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+          with_items: ['/etc/letsencrypt/live/mediacms.io/', '/etc/letsencrypt/live/{{ FRONTEND_HOST_DOMAIN }}', '/etc/nginx/sites-enabled', '/etc/nginx/sites-available', '/etc/nginx/dhparams/']
 
+        - name: delete some nginx files
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          with_items: ['/etc/nginx/conf.d/default.conf', '/etc/nginx/sites-enabled/default']
 
-    - name: generate ADMIN_PASS
-      ansible.builtin.shell: /home/mediacms.io/bin/python3 -c "import secrets;chars = 'abcdefghijklmnopqrstuvwxyz0123456789';print(''.join(secrets.choice(chars) for i in range(10)))"
-      register: admin_pass
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - name: copy fullchain.pem
+          ansible.builtin.copy:
+           src: /home/mediacms.io/mediacms/deploy/local_install/mediacms.io_fullchain.pem
+           dest: "/etc/letsencrypt/live/{{ FRONTEND_HOST_DOMAIN }}/fullchain.pem"
+           remote_src: true
 
-    - name: Set ADMIN_PASS
-      ansible.builtin.set_fact: ADMIN_PASS="{{ admin_pass.stdout }}"
+        - name: copy privkey.pem
+          ansible.builtin.copy:
+           src: /home/mediacms.io/mediacms/deploy/local_install/mediacms.io_privkey.pem
+           dest: "/etc/letsencrypt/live/{{ FRONTEND_HOST_DOMAIN }}/privkey.pem"
+           remote_src: true
 
+        - name: copy dhparams.pem
+          ansible.builtin.copy:
+           src: /home/mediacms.io/mediacms/deploy/local_install/dhparams.pem
+           dest: /etc/nginx/dhparams/dhparams.pem
+           remote_src: true
 
-    - debug:
-        msg: "ADMIN_PASS: {{ ADMIN_PASS }}"
+        - name: copy mediacms.io
+          ansible.builtin.copy:
+           src: /home/mediacms.io/mediacms/deploy/local_install/mediacms.io
+           dest: /etc/nginx/sites-available/mediacms.io
+           remote_src: true
 
+        - name: symbolic link to /etc/nginx/sites-enabled/mediacms.io
+          ansible.builtin.file:
+            src: /etc/nginx/sites-available/mediacms.io
+            dest: /etc/nginx/sites-enabled/mediacms.io
+            state: link
 
-    - name: insert ADMIN_PASS on model
-      ansible.builtin.shell: echo "from users.models import User; User.objects.create_superuser('admin', 'admin@example.com', '{{ ADMIN_PASS }}')" | /home/mediacms.io/bin/python3 manage.py shell
-      register: insert_admin_pass
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - name: copy uwsgi_params
+          ansible.builtin.copy:
+           src: /home/mediacms.io/mediacms/deploy/local_install/uwsgi_params
+           dest: /etc/nginx/sites-enabled/uwsgi_params
+           remote_src: true
 
+        - name: copy nginx.conf
+          ansible.builtin.copy:
+           src: /home/mediacms.io/mediacms/deploy/local_install/nginx.conf
+           dest: /etc/nginx/nginx.conf
+           remote_src: true
 
-    - debug:
-        msg: "insert ADMIN_PASS output: {{ insert_admin_pass }}"
+        - name: restart nginx
+          ansible.builtin.systemd:
+           name: nginx
+           state: restarted
 
+        - name: Recursively change ownership of /home/mediacms.io/
+          ansible.builtin.file:
+            path: /home/mediacms.io
+            state: directory
+            recurse: yes
+            owner: www-data
+            group: www-data
 
-    - name: insert FRONTEND_HOST_DOMAIN on model
-      ansible.builtin.shell: echo "from django.contrib.sites.models import Site; Site.objects.update(name='{{ FRONTEND_HOST_DOMAIN }}', domain='{{ FRONTEND_HOST_DOMAIN }}')" | /home/mediacms.io/bin/python3 manage.py shell
-      register: insert_fronted_host_domain
-      args:
-        chdir: /home/mediacms.io/mediacms/
+        - name: enable and start mediacms
+          ansible.builtin.systemd:
+           name: '{{ item }}'
+           enabled: yes
+           state: restarted
+           daemon_reload: yes
+          with_items: [mediacms]
 
+        - name: Check install http://{{ ansible_default_ipv4.address }}
+          uri:
+            url: "http://{{ ansible_default_ipv4.address }}/"
+            method: GET
+          register: _result
+          until: _result.status == 200
+          retries: 3
+          delay: 5
+          ignore_errors: true
 
-    - debug:
-        msg: "insert FRONTEND_HOST_DOMAIN output: {{ insert_fronted_host_domain }}"
+        # ugly hack in case mediacms is not up
+        # it may take a while
+        - name: restart mediacms
+          ansible.builtin.systemd:
+           name: '{{ item }}'
+           enabled: yes
+           state: restarted
+           daemon_reload: yes
+          with_items: [mediacms]
+          when: "_result.status != 200"
 
+        # always REDIS_IP and POSTGRESQL_IP are defined (can be local or remote hosts)
+        - debug:
+            msg: "REDIS_IP: {{REDIS_IP}}, POSTGRESQL_IP: {{ POSTGRESQL_IP }}, POSTGRESQL_USER: {{ POSTGRESQL_USER }}, POSTGRESQL_PASSWD: {{ POSTGRESQL_PASSWD }}, POSTGRESQL_DATABASE: {{ POSTGRESQL_DATABASE }}"
 
-    - name: Recursively change ownership of /home/mediacms.io/
-      ansible.builtin.file:
-        path: /home/mediacms.io
-        state: directory
-        recurse: yes
-        owner: www-data
-        group: www-data
-
-    - name: copy celery systemd units
-      ansible.builtin.copy:
-       src: "/home/mediacms.io/mediacms/deploy/local_install/{{ item }}"
-       dest: "/etc/systemd/system/{{ item }}"
-       remote_src: true
-      with_items: [celery_long.service, celery_short.service, celery_beat.service, mediacms.service]
-
-
-    - name: Generat nginx dirs
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-      with_items: ['/etc/letsencrypt/live/mediacms.io/', '/etc/letsencrypt/live/{{ FRONTEND_HOST_DOMAIN }}', '/etc/nginx/sites-enabled', '/etc/nginx/sites-available', '/etc/nginx/dhparams/']
-
-
-    - name: delete some nginx files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      with_items: ['/etc/nginx/conf.d/default.conf', '/etc/nginx/sites-enabled/default']
-
-
-    - name: copy fullchain.pem
-      ansible.builtin.copy:
-       src: /home/mediacms.io/mediacms/deploy/local_install/mediacms.io_fullchain.pem
-       dest: "/etc/letsencrypt/live/{{ FRONTEND_HOST_DOMAIN }}/fullchain.pem"
-       remote_src: true
-
-
-    - name: copy privkey.pem
-      ansible.builtin.copy:
-       src: /home/mediacms.io/mediacms/deploy/local_install/mediacms.io_privkey.pem
-       dest: "/etc/letsencrypt/live/{{ FRONTEND_HOST_DOMAIN }}/privkey.pem"
-       remote_src: true
-
-
-    - name: copy dhparams.pem
-      ansible.builtin.copy:
-       src: /home/mediacms.io/mediacms/deploy/local_install/dhparams.pem
-       dest: /etc/nginx/dhparams/dhparams.pem
-       remote_src: true
-
-
-    - name: copy mediacms.io
-      ansible.builtin.copy:
-       src: /home/mediacms.io/mediacms/deploy/local_install/mediacms.io
-       dest: /etc/nginx/sites-available/mediacms.io
-       remote_src: true
-
-
-    - name: symbolic link to /etc/nginx/sites-enabled/mediacms.io
-      ansible.builtin.file:
-        src: /etc/nginx/sites-available/mediacms.io
-        dest: /etc/nginx/sites-enabled/mediacms.io
-        state: link
-
-
-    - name: copy uwsgi_params
-      ansible.builtin.copy:
-       src: /home/mediacms.io/mediacms/deploy/local_install/uwsgi_params
-       dest: /etc/nginx/sites-enabled/uwsgi_params
-       remote_src: true
-
-
-    - name: copy nginx.conf
-      ansible.builtin.copy:
-       src: /home/mediacms.io/mediacms/deploy/local_install/nginx.conf
-       dest: /etc/nginx/nginx.conf
-       remote_src: true
-
-
-    - name: restart nginx
-      ansible.builtin.systemd:
-       name: nginx
-       state: restarted
-
-
-    - name: Recursively change ownership of /home/mediacms.io/
-      ansible.builtin.file:
-        path: /home/mediacms.io
-        state: directory
-        recurse: yes
-        owner: www-data
-        group: www-data
-
-
-    - name: enable and start systemd units
-      ansible.builtin.systemd:
-       name: '{{ item }}'
-       enabled: yes
-       state: restarted
-       daemon_reload: yes
-      with_items: [celery_long, celery_short, celery_beat, mediacms]
-
-
-    - name: Check install
-      uri:
-        url: "http://{{ ansible_default_ipv4.address }}"
-        method: GET
-        status_code: [200]
-      register: result
-      until: result.status == 200
-      retries: 3
-      delay: 5
-
-
-    # ugly hack in case mediacms is not up
-    # it may take a while
-    - name: restart mediacms
-      ansible.builtin.systemd:
-       name: '{{ item }}'
-       enabled: yes
-       state: restarted
-       daemon_reload: yes
-      with_items: [mediacms]
-      when: "result.status != 200"
-
-    - debug:
-        msg: "MediaCMS installation completed, open browser on http://{{ FRONTEND_HOST_DOMAIN }} and login with user admin and password {{ ADMIN_PASS }}"
+        - debug:
+            msg: "MediaCMS installation completed, open browser on http://{{ FRONTEND_HOST_DOMAIN }} and login with user admin and password {{ ADMIN_PASS }}"

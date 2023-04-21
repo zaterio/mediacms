@@ -15,3 +15,10 @@ postgresql ansible_port=22
 
 [redis_servers]
 redis ansible_port=22
+
+# If you need to install multiple mediacms servers:
+# queue separation is done at the virtualhost level in rabbitmq
+# this allows multiple mediacms servers to be installed and perfectly isolated
+# no encoding errors occur
+[rabbitmq_servers]
+rabbitz1 ansible_port=22
