@@ -207,6 +207,31 @@
            daemon_reload: yes
           with_items: [celery_long, celery_short, celery_beat]
 
+        - name: virtual env install flower
+          ansible.builtin.pip:
+           virtualenv: /home/mediacms.io/python-flower
+           virtualenv_command: /usr/bin/python3 -m venv
+           name: [flower, celery]
+          when:
+            - RABBIT_MQ_SETUP is defined
+
+        - name: flower systemd units
+          ansible.builtin.template:
+           src: "../templates/flower.service"
+           dest: "/etc/systemd/system/flower.service"
+           remote_src: false
+          when:
+            - RABBIT_MQ_SETUP is defined
+
+        - name: enable and start systemd units
+          ansible.builtin.systemd:
+           name: flower.service
+           enabled: yes
+           state: restarted
+           daemon_reload: yes
+          when:
+            - RABBIT_MQ_SETUP is defined
+
         - name: manage.py migrate
           ansible.builtin.command: /home/mediacms.io/bin/python3 manage.py migrate
           register: migrate

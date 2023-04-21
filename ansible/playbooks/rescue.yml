@@ -1,4 +1,15 @@
 # on failure try to clean postgres and rabbitmq
+- name: enable and start systemd units
+  any_errors_fatal: true
+  ignore_errors: true
+  ignore_unreachable: true
+  ansible.builtin.systemd:
+   name: '{{ item }}'
+   enabled: no
+   state: stopped
+   daemon_reload: yes
+  with_items: [celery_long, celery_short, celery_beat, mediacms, flower]
+
 - name: clean postgresql remote
   any_errors_fatal: true
   ignore_errors: true
