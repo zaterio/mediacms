@@ -1,7 +1,8 @@
 # only one media server can be added, at the moment there is no celery queue separation at the redis level, which implies coding errors
 
 [mediacms_servers]
-testmediacms1 ansible_port=22
+mediacms1 ansible_port=22
+mediacms2 ansible_port=22
 
 # If postgresql_servers is declared, it must contain a single host.
 # Only Debian bullseye postgresql server allowed.

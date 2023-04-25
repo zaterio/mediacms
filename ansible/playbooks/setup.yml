@@ -83,9 +83,16 @@
       with_items: [celery_long, celery_short, celery_beat, mediacms.service]
       ignore_errors: true
 
+    - name: Update apt-get repo and cache
+      ansible.builtin.apt:
+        update_cache: yes
+        force_apt_get: yes
+        cache_valid_time: 3600
+        upgrade: yes
+
     - name: Installs software-properties-common
       ansible.builtin.apt:
-        name: [software-properties-common, sudo, python3-psycopg2]
+        name: [software-properties-common, sudo, python3-psycopg2, psmisc]
         state: latest
 
     - name: Installs repos
@@ -97,7 +104,6 @@
         update_cache: yes
         force_apt_get: yes
         cache_valid_time: 3600
-        upgrade: yes
 
     - name: Installs common packages
       ansible.builtin.apt:
