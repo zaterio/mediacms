@@ -483,3 +483,6 @@ if GLOBAL_LOGIN_REQUIRED:
         r'/accounts/signup/$',
         r'/api/v[0-9]+/',
     ]
+
+EXTERNAL_TRANSCODER_ENABLED: True
+EXTERNAL_TRANSCODER_API_URL: 'http://10.255.255.102:8082/jobs'

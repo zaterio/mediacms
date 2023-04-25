@@ -270,7 +270,7 @@ def encode_media(
     with tempfile.TemporaryDirectory(dir=settings.TEMP_DIRECTORY) as temp_dir:
         tf = create_temp_file(suffix=".{0}".format(profile.extension), dir=temp_dir)
         tfpass = create_temp_file(suffix=".{0}".format(profile.extension), dir=temp_dir)
-        ffmpeg_commands = produce_ffmpeg_commands(
+        ffmpeg_commands, external_transcoder_params = produce_ffmpeg_commands(
             original_media_path,
             media.media_info,
             resolution=profile.resolution,
@@ -292,6 +292,15 @@ def encode_media(
         # binding these, so they are available on on_failure
         self.encoding = encoding
         self.media = media
+
+        if settings.EXTERNAL_TRANSCODER_ENABLED:
+            if not external_transcoder_params:
+                encoding.status = "fail"
+                encoding.save(update_fields=["status"])
+                return False
+            logger.info(f'external_transcoder_params: {external_transcoder_params}')
+
+
         # can be one-pass or two-pass
         for ffmpeg_command in ffmpeg_commands:
             ffmpeg_command = [str(s) for s in ffmpeg_command]

@@ -766,7 +766,25 @@ def produce_ffmpeg_commands(media_file, media_info, resolution, codec, output_fi
                 chunk=chunk,
             )
         )
-    return cmds
+    external_transcoder_params = {
+        'media_file': media_file,
+        'output_file': output_file,
+        'has_audio': has_audio,
+        'codec': codec,
+        'encoder': encoder,
+        'audio_encoder': audio_encoder,
+        'target_fps': target_fps,
+        'interlaced': interlaced,
+        'target_height': target_height,
+        'target_rate': target_rate,
+        'target_rate_audio': target_rate_audio,
+        'pass_file': pass_file,
+        'pass_number': pass_number,
+        'enc_type': enc_type,
+        'chunk': chunk
+    }
+
+    return cmds, external_transcoder_params
 
 
 def clean_query(query):
