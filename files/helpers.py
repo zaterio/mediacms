@@ -797,7 +797,8 @@ def post_external_transcoder_api(endpoint_url, item, logger):
             headers={'Content-Type': 'application/json'}
         )
         r.raise_for_status()
-        return r
+        job_id = r.json()['_id']
+        return job_id
     except Exception as e:
         logger.error(f'Error post_external_transcoder_api: {r.text}, {e}')
         return False

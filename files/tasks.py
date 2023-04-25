@@ -293,65 +293,79 @@ def encode_media(
         # binding these, so they are available on on_failure
         self.encoding = encoding
         self.media = media
+        external_transcoder_enabled = settings.EXTERNAL_TRANSCODER_ENABLED
 
-        if settings.EXTERNAL_TRANSCODER_ENABLED:
+        if external_transcoder_enabled:
             if not external_transcoder_params:
                 encoding.status = "fail"
                 encoding.save(update_fields=["status"])
-                return False
-                extr = post_external_transcoder_api(settings.EXTERNAL_TRANSCODER_API_URL, external_transcoder_params)
-                if extr:
-                    logger.info(f'API RESPONSE: {extr}, {extr.text}')
+                logger.error('cannot get parameter for external transcoder')
+                external_transcoder_enabled = False
+            else:
+                external_transcoder_params['encoding_id'] = encoding_id
+                external_transcoder_params['friendly_token'] = friendly_token
+                external_transcoder_params['profile_id'] = profile_id
+                external_transcoder_params['encoding_url'] = encoding_url
+                job_id = post_external_transcoder_api(settings.EXTERNAL_TRANSCODER_API_URL, external_transcoder_params, logger)
 
-        # can be one-pass or two-pass
-        for ffmpeg_command in ffmpeg_commands:
-            ffmpeg_command = [str(s) for s in ffmpeg_command]
-            encoding_backend = FFmpegBackend()
-            try:
-                encoding_command = encoding_backend.encode(ffmpeg_command)
-                duration, n_times = 0, 0
-                output = ""
-                while encoding_command:
-                    try:
-                        # TODO: understand an eternal loop
-                        # eg h265 with mv4 file issue, and stop with error
-                        output = next(encoding_command)
-                        duration = calculate_seconds(output)
-                        if duration:
-                            percent = duration * 100 / media.duration
-                            if n_times % 60 == 0:
-                                encoding.progress = percent
-                                try:
-                                    encoding.save(update_fields=["progress", "update_date"])
-                                    logger.info("Saved {0}".format(round(percent, 2)))
-                                except BaseException:
-                                    pass
-                            n_times += 1
-                    except StopIteration:
-                        break
-                    except VideoEncodingError:
-                        # ffmpeg error, or ffmpeg was killed
-                        raise
-            except Exception as e:
+                if job_id:
+                    logger.info(f'JOB ID: {type(job_id)}, {job_id}')
+                else:
+                    logger.info(f'API RESPONSE: {extr}, {extr.text}')
+                    external_transcoder_enabled = False
+
+            external_transcoder_enabled = False
+
+        if not external_transcoder_enabled:
+            # can be one-pass or two-pass
+            for ffmpeg_command in ffmpeg_commands:
+                ffmpeg_command = [str(s) for s in ffmpeg_command]
+                encoding_backend = FFmpegBackend()
                 try:
-                    # output is empty, fail message is on the exception
-                    output = e.message
-                except AttributeError:
+                    encoding_command = encoding_backend.encode(ffmpeg_command)
+                    duration, n_times = 0, 0
                     output = ""
-                if isinstance(e, SoftTimeLimitExceeded):
-                    kill_ffmpeg_process(encoding.temp_file)
-                encoding.logs = output
-                encoding.status = "fail"
-                encoding.save(update_fields=["status", "logs"])
-                raise_exception = True
-                # if this is an ffmpeg's valid error
-                # no need for the task to be re-run
-                # otherwise rerun task...
-                for error_msg in ERRORS_LIST:
-                    if error_msg.lower() in output.lower():
-                        raise_exception = False
-                if raise_exception:
-                    raise self.retry(exc=e, countdown=5, max_retries=1)
+                    while encoding_command:
+                        try:
+                            # TODO: understand an eternal loop
+                            # eg h265 with mv4 file issue, and stop with error
+                            output = next(encoding_command)
+                            duration = calculate_seconds(output)
+                            if duration:
+                                percent = duration * 100 / media.duration
+                                if n_times % 60 == 0:
+                                    encoding.progress = percent
+                                    try:
+                                        encoding.save(update_fields=["progress", "update_date"])
+                                        logger.info("Saved {0}".format(round(percent, 2)))
+                                    except BaseException:
+                                        pass
+                                n_times += 1
+                        except StopIteration:
+                            break
+                        except VideoEncodingError:
+                            # ffmpeg error, or ffmpeg was killed
+                            raise
+                except Exception as e:
+                    try:
+                        # output is empty, fail message is on the exception
+                        output = e.message
+                    except AttributeError:
+                        output = ""
+                    if isinstance(e, SoftTimeLimitExceeded):
+                        kill_ffmpeg_process(encoding.temp_file)
+                    encoding.logs = output
+                    encoding.status = "fail"
+                    encoding.save(update_fields=["status", "logs"])
+                    raise_exception = True
+                    # if this is an ffmpeg's valid error
+                    # no need for the task to be re-run
+                    # otherwise rerun task...
+                    for error_msg in ERRORS_LIST:
+                        if error_msg.lower() in output.lower():
+                            raise_exception = False
+                    if raise_exception:
+                        raise self.retry(exc=e, countdown=5, max_retries=1)
 
         encoding.logs = output
         encoding.progress = 100
