@@ -32,6 +32,7 @@ from .helpers import (
     produce_friendly_token,
     rm_file,
     run_command,
+    post_external_transcoder_api,
 )
 from .methods import list_tasks, notify_users, pre_save_action
 from .models import Category, EncodeProfile, Encoding, Media, Rating, Tag
@@ -298,8 +299,9 @@ def encode_media(
                 encoding.status = "fail"
                 encoding.save(update_fields=["status"])
                 return False
-            logger.info(f'external_transcoder_params: {external_transcoder_params}')
-
+                extr = post_external_transcoder_api(settings.EXTERNAL_TRANSCODER_API_URL, external_transcoder_params)
+                if extr:
+                    logger.info(f'API RESPONSE: {extr}, {extr.text}')
 
         # can be one-pass or two-pass
         for ffmpeg_command in ffmpeg_commands:

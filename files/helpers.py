@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 from fractions import Fraction
+import requests
 
 import filetype
 from django.conf import settings
@@ -768,23 +769,39 @@ def produce_ffmpeg_commands(media_file, media_info, resolution, codec, output_fi
         )
     external_transcoder_params = {
         'media_file': media_file,
-        'output_file': output_file,
-        'has_audio': has_audio,
+        'output_file': output_filename,
+        'has_audio': media_info.get("has_audio"),
         'codec': codec,
         'encoder': encoder,
-        'audio_encoder': audio_encoder,
-        'target_fps': target_fps,
+        'audio_encoder': AUDIO_ENCODERS[codec],
+        'target_fps': str(target_fps),
         'interlaced': interlaced,
-        'target_height': target_height,
+        'target_height': resolution,
         'target_rate': target_rate,
-        'target_rate_audio': target_rate_audio,
+        'target_rate_audio': AUDIO_BITRATES[codec],
         'pass_file': pass_file,
         'pass_number': pass_number,
         'enc_type': enc_type,
-        'chunk': chunk
+        'chunk': chunk,
+        'ffmpeg_commands': cmds
     }
 
     return cmds, external_transcoder_params
+
+
+def post_external_transcoder_api(endpoint_url, item, logger):
+    try:
+        r = requests.post(
+            url=endpoint_url,
+            data=json.dumps(item),
+            headers={'Content-Type': 'application/json'}
+        )
+        r.raise_for_status()
+        return r
+    except Exception as e:
+        logger.error(f'Error post_external_transcoder_api: {r.text}, {e}')
+        return False
+    return False
 
 
 def clean_query(query):
