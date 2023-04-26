@@ -296,22 +296,24 @@ def encode_media(
         external_transcoder_enabled = settings.EXTERNAL_TRANSCODER_ENABLED
 
         if external_transcoder_enabled:
+            endpoint_url = settings.EXTERNAL_TRANSCODER_API_URL
+            encoding.logs = "sending job to external transcoder"
+
             if not external_transcoder_params:
-                encoding.status = "fail"
-                encoding.save(update_fields=["status"])
-                logger.error('cannot get parameter for external transcoder')
+                encoding.logs = 'cannot get parameters for external transcoder, continuing locally...'
                 external_transcoder_enabled = False
             else:
                 external_transcoder_params['encoding_id'] = encoding_id
                 external_transcoder_params['friendly_token'] = friendly_token
                 external_transcoder_params['profile_id'] = profile_id
                 external_transcoder_params['encoding_url'] = encoding_url
-                job_id = post_external_transcoder_api(settings.EXTERNAL_TRANSCODER_API_URL, external_transcoder_params, logger)
+
+                job_id = post_external_transcoder_api(endpoint_url, external_transcoder_params, logger)
 
                 if job_id:
                     logger.info(f'JOB ID: {type(job_id)}, {job_id}')
                 else:
-                    logger.info(f'API RESPONSE: {extr}, {extr.text}')
+                    encoding.logs = 'cannot get job_id for external transcoder, continuing locally...'
                     external_transcoder_enabled = False
 
             external_transcoder_enabled = False
