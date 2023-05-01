@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from fractions import Fraction
 import requests
+import json
 
 import filetype
 from django.conf import settings
@@ -789,6 +790,15 @@ def produce_ffmpeg_commands(media_file, media_info, resolution, codec, output_fi
     return cmds, external_transcoder_params
 
 
+def get_external_transcoder_api(endpoint_url, job_id, logger):
+    try:
+        r = requests.get(f'{endpoint_url}/{job_id}')
+        return json.loads(r.rtext)
+    except Exception as e:
+        logger.error(f'Error get_external_transcoder_api: {r.text}, {e}')
+        return False
+
+
 def post_external_transcoder_api(endpoint_url, item, logger):
     try:
         r = requests.post(
@@ -802,7 +812,6 @@ def post_external_transcoder_api(endpoint_url, item, logger):
     except Exception as e:
         logger.error(f'Error post_external_transcoder_api: {r.text}, {e}')
         return False
-    return False
 
 
 def clean_query(query):

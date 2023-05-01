@@ -33,9 +33,13 @@ from .helpers import (
     rm_file,
     run_command,
     post_external_transcoder_api,
+    get_external_transcoder_api,
 )
 from .methods import list_tasks, notify_users, pre_save_action
 from .models import Category, EncodeProfile, Encoding, Media, Rating, Tag
+import time
+from datetime import datetime
+
 
 logger = get_task_logger(__name__)
 
@@ -294,29 +298,71 @@ def encode_media(
         self.encoding = encoding
         self.media = media
         external_transcoder_enabled = settings.EXTERNAL_TRANSCODER_ENABLED
+        external_transcoder_on_fail_to_cpu = settings.EXTERNAL_TRANSCODER_ON_FAIL_TO_CPU
 
+        output = None
+        status = 'fail'
         if external_transcoder_enabled:
             endpoint_url = settings.EXTERNAL_TRANSCODER_API_URL
-            encoding.logs = "sending job to external transcoder"
+            logger.info('sending job to external transcoder')
 
             if not external_transcoder_params:
-                encoding.logs = 'cannot get parameters for external transcoder, continuing locally...'
-                external_transcoder_enabled = False
+                logger.error('cannot get parameters for external transcoder')
+
+                if external_transcoder_on_fail_to_cpu:
+                    external_transcoder_enabled = False
+                else:
+                    return False
+
             else:
                 external_transcoder_params['encoding_id'] = encoding_id
                 external_transcoder_params['friendly_token'] = friendly_token
                 external_transcoder_params['profile_id'] = profile_id
                 external_transcoder_params['encoding_url'] = encoding_url
+                external_transcoder_params['api_url'] = endpoint_url
+                external_transcoder_params['media_duration'] = media.duration
 
                 job_id = post_external_transcoder_api(endpoint_url, external_transcoder_params, logger)
 
                 if job_id:
-                    logger.info(f'JOB ID: {type(job_id)}, {job_id}')
-                else:
-                    encoding.logs = 'cannot get job_id for external transcoder, continuing locally...'
+                    max_get_errors = 3
+                    get_errors = 0
+
+                    while True:
+                        time.sleep(5)
+                        job = get_external_transcoder_api(endpoint_url, job_id, logger)
+
+                        if job:
+                            output = job['log']
+                            encoding.progress = job['progress']
+
+                            try:
+                                encoding.save(update_fields=["progress", "update_date"])
+                                logger.info(f"Saved {job['progress']}")
+                            except BaseException:
+                                pass
+
+                            if job['progress'] == 100:
+                                status = 'success'
+                                break
+
+                            if job['error']:
+                                status = 'fail'
+                                break
+
+                        else:
+                            if get_errors > max_get_errors:
+                                status = 'fail'
+                                break
+                            get_errors += 1
+
+            if output:
+                encoding.logs = output
+
+            if status == 'fail':
+                if external_transcoder_on_fail_to_cpu:
                     external_transcoder_enabled = False
 
-            external_transcoder_enabled = False
 
         if not external_transcoder_enabled:
             # can be one-pass or two-pass
@@ -369,8 +415,8 @@ def encode_media(
                     if raise_exception:
                         raise self.retry(exc=e, countdown=5, max_retries=1)
 
-        encoding.logs = output
-        encoding.progress = 100
+            encoding.logs = output
+            encoding.progress = 100
 
         success = False
         encoding.status = "fail"
