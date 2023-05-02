@@ -793,9 +793,9 @@ def produce_ffmpeg_commands(media_file, media_info, resolution, codec, output_fi
 def get_external_transcoder_api(endpoint_url, job_id, logger):
     try:
         r = requests.get(f'{endpoint_url}/{job_id}')
-        return json.loads(r.rtext)
+        return json.loads(r.text)
     except Exception as e:
-        logger.error(f'Error get_external_transcoder_api: {r.text}, {e}')
+        logger.error(f'Error get_external_transcoder_api: {e}')
         return False
 
 
@@ -810,7 +810,7 @@ def post_external_transcoder_api(endpoint_url, item, logger):
         job_id = r.json()['_id']
         return job_id
     except Exception as e:
-        logger.error(f'Error post_external_transcoder_api: {r.text}, {e}')
+        logger.error(f'Error post_external_transcoder_api: {e}')
         return False
 
 

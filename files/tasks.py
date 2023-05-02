@@ -335,10 +335,9 @@ def encode_media(
                         if job:
                             output = job['log']
                             encoding.progress = job['progress']
-
                             try:
                                 encoding.save(update_fields=["progress", "update_date"])
-                                logger.info(f"Saved {job['progress']}")
+                                logger.info(f"External Trancoder: Saved {job['progress']}")
                             except BaseException:
                                 pass
 
@@ -421,9 +420,11 @@ def encode_media(
         success = False
         encoding.status = "fail"
         if os.path.exists(tf) and os.path.getsize(tf) != 0:
+            logger.info(f'VERIFICANDO ARCHIVO EN {tf}')
             ret = media_file_info(tf)
             if ret.get("is_video") or ret.get("is_audio"):
                 encoding.status = "success"
+                logger.info(f'ARCHIVO {tf} OK')
                 success = True
 
                 with open(tf, "rb") as f:
@@ -439,6 +440,7 @@ def encode_media(
         except BaseException:
             pass
 
+        logger.info(f'ENCODING OK: {success}')
         return success
 
 
